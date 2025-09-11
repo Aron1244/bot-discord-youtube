@@ -1,3 +1,7 @@
+# ⚠️ ATENCIÓN: SOLO PARA PRUEBAS ⚠️
+
+Este bot de Discord es una implementación de desarrollo y está destinado **exclusivamente para uso local y pruebas**. No se recomienda su uso en servidores grandes o de producción.
+
 # Bot de Música para Discord
 
 Bot de música para Discord desarrollado en Python que permite reproducir música desde YouTube en tu servidor de Discord.
