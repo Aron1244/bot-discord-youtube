@@ -9,24 +9,6 @@ from discord import FFmpegPCMAudio
 # Cargar variables de entorno
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-# --- INICIO DE MODIFICACIÓN ---
-# Recupera el contenido de las cookies de la variable de entorno de Render
-YOUTUBE_COOKIES_CONTENT = os.getenv("YOUTUBE_COOKIES")
-
-# Define la ruta para un archivo temporal de cookies en el sistema de Render.
-# El directorio /tmp/ es el lugar recomendado para archivos temporales en entornos Linux como Render.
-YT_COOKIES_FILE_PATH = "/tmp/yt_cookies.txt"
-
-# Si la variable de entorno YOUTUBE_COOKIES tiene contenido, lo escribimos en el archivo temporal.
-# Esto se hace una vez al inicio del bot.
-if YOUTUBE_COOKIES_CONTENT:
-    try:
-        with open(YT_COOKIES_FILE_PATH, 'w') as f:
-            f.write(YOUTUBE_COOKIES_CONTENT)
-        print(f"✅ Cookies de YouTube escritas en {YT_COOKIES_FILE_PATH}")
-    except Exception as e:
-        print(f"❌ Error al escribir las cookies de YouTube en el archivo: {e}")
-# --- FIN DE MODIFICACIÓN ---
 
 # Configuración del bot
 intents = discord.Intents.default()
@@ -35,14 +17,7 @@ intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Ruta a ffmpeg
-# --- INICIO DE MODIFICACIÓN ---
-# En Render, 'ffmpeg' suele estar pre-instalado en el PATH del sistema,
-# por lo que no necesitas especificar una ruta local compleja ni un .exe.
-# Si estás incluyendo ffmpeg en tu propio repositorio, asegúrate de que sea la versión de Linux
-# y ajusta esta ruta para que apunte al binario correcto dentro de tu estructura de archivos.
-# Por ejemplo: RUTA_FFMPEG = "./ffmpeg/ffmpeg" si tu binario está en la carpeta 'ffmpeg' dentro de tu proyecto.
-RUTA_FFMPEG = "ffmpeg" # Usar 'ffmpeg' si está en el PATH del sistema de Render
-# --- FIN DE MODIFICACIÓN ---
+RUTA_FFMPEG = "./ffmpeg/bin/ffmpeg.exe"
 
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -59,18 +34,9 @@ def buscar_youtube_audio(query):
         'quiet': True,
         'default_search': 'ytsearch1'
     }
-    # --- INICIO DE MODIFICACIÓN ---
-    # Añadir la opción 'cookiefile' si las cookies están disponibles
-    if YOUTUBE_COOKIES_CONTENT:
-        ydl_opts['cookiefile'] = YT_COOKIES_FILE_PATH
-    # --- FIN DE MODIFICACIÓN ---
-
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
         if 'entries' in info and len(info['entries']) > 0:
-            # Nota: La URL generada aquí 'https://www.youtube.com/watch?v=' es inusual.
-            # Normalmente sería 'https://www.youtube.com/watch?v=' + info['entries'][0]['id']
-            # Mantengo tu lógica original, pero si hay problemas de reproducción, esto podría ser una causa.
             return f"https://www.youtube.com/watch?v={info['entries'][0]['id']}"
         elif 'webpage_url' in info:
             return info['webpage_url']
@@ -87,7 +53,7 @@ async def unirse_canal_voz(ctx):
 
 # Función para reproducir el siguiente audio en la cola
 async def reproducir_siguiente(ctx, guild_id):
-    if guild_id not in colas_musica or colas_musica[guild_id].empty():
+    if colas_musica[guild_id].empty():
         return
 
     siguiente = await colas_musica[guild_id].get()
@@ -180,13 +146,13 @@ async def comandos(ctx):
     mensaje = """
 📜 **Comandos disponibles:**
 
-🎵 `!youtube <nombre o link>` - Busca y reproduce música desde YouTube
-⏭ `!skip` - Salta la canción actual
-📝 `!lista` - Muestra la lista de canciones en cola
-❌ `!eliminar <nombre>` - Elimina una canción específica de la cola
-🧹 `!limpiar` - Limpia completamente la cola de canciones
-⏹ `!stop` - Detiene la reproducción
-👋 `!leave` - Sale del canal de voz
+🎵 `!youtube <nombre o link>` - Busca y reproduce música desde YouTube  
+⏭ `!skip` - Salta la canción actual  
+📝 `!lista` - Muestra la lista de canciones en cola  
+❌ `!eliminar <nombre>` - Elimina una canción específica de la cola  
+🧹 `!limpiar` - Limpia completamente la cola de canciones  
+⏹ `!stop` - Detiene la reproducción  
+👋 `!leave` - Sale del canal de voz  
 📖 `!comandos` - Muestra esta lista de comandos
 """
     await ctx.send(mensaje)
@@ -196,7 +162,7 @@ async def comandos(ctx):
 @bot.command()
 async def youtube(ctx, *, nombre: str):
     try:
-        url = buscar_youtube_audio(nombre) # Esta función ya usará cookies si están disponibles
+        url = buscar_youtube_audio(nombre)
         if not url:
             await ctx.send("No se encontró ningún video.")
             return
@@ -206,12 +172,6 @@ async def youtube(ctx, *, nombre: str):
             'quiet': True,
             'noplaylist': True
         }
-        # --- INICIO DE MODIFICACIÓN ---
-        # Añadir la opción 'cookiefile' si las cookies están disponibles
-        if YOUTUBE_COOKIES_CONTENT:
-            ydl_opts['cookiefile'] = YT_COOKIES_FILE_PATH
-        # --- FIN DE MODIFICACIÓN ---
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             url_audio = info['url']
