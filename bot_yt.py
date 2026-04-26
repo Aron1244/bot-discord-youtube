@@ -3,17 +3,32 @@ from discord.ext import commands
 import yt_dlp
 import asyncio
 import os
+import shutil
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
 from discord import FFmpegPCMAudio
 
 # Cargar variables de entorno
-load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)
+
+
+def obtener_token_discord():
+    token = os.getenv("DISCORD_TOKEN", "").strip().strip('"').strip("'")
+    if not token or token.lower() in {"tu_token_aqui", "tu_token_aquí", "token"}:
+        raise ValueError(
+            "DISCORD_TOKEN no está configurado correctamente. "
+            "Crea/edita el archivo .env en la raíz con: DISCORD_TOKEN=tu_token_real"
+        )
+    return token
+
+
+TOKEN = obtener_token_discord()
 
 # Configuración del bot
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Ruta a ffmpeg
@@ -26,14 +41,40 @@ ffmpeg_options = {
 
 colas_musica = {}  # Diccionario con una cola por servidor
 
-# Función para buscar en YouTube
-def buscar_youtube_audio(query):
-    ydl_opts = {
-        'format': 'bestaudio/best',
+
+def crear_opciones_yt_dlp(formato, busqueda_por_defecto=None):
+    node_path = shutil.which("node")
+    opciones = {
+        'format': formato,
         'noplaylist': True,
         'quiet': True,
-        'default_search': 'ytsearch1'
+        'remote_components': ['ejs:github']
     }
+
+    if node_path:
+        opciones['js_runtimes'] = {'node': {'path': node_path}}
+
+    if busqueda_por_defecto:
+        opciones['default_search'] = busqueda_por_defecto
+
+    return opciones
+
+
+def voz_disponible():
+    return bool(getattr(discord.voice_client, 'has_nacl', False))
+
+
+def mensaje_error_voz():
+    return (
+        "❌ Falta soporte de voz (PyNaCl) para este proceso.\n"
+        f"Python en uso: {sys.executable}\n"
+        "Instala/reinstala con este comando y reinicia el bot:\n"
+        f"{sys.executable} -m pip install --upgrade --force-reinstall pynacl"
+    )
+
+# Función para buscar en YouTube
+def buscar_youtube_audio(query):
+    ydl_opts = crear_opciones_yt_dlp('bestaudio/best', busqueda_por_defecto='ytsearch1')
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(query, download=False)
         if 'entries' in info and len(info['entries']) > 0:
@@ -44,6 +85,10 @@ def buscar_youtube_audio(query):
 
 # Función para unirse al canal de voz
 async def unirse_canal_voz(ctx):
+    if not voz_disponible():
+        await ctx.send(mensaje_error_voz())
+        return None
+
     if ctx.author.voice:
         canal_voz = ctx.author.voice.channel
         return await canal_voz.connect()
@@ -162,16 +207,16 @@ async def comandos(ctx):
 @bot.command()
 async def youtube(ctx, *, nombre: str):
     try:
+        if not voz_disponible():
+            await ctx.send(mensaje_error_voz())
+            return
+
         url = buscar_youtube_audio(nombre)
         if not url:
             await ctx.send("No se encontró ningún video.")
             return
 
-        ydl_opts = {
-            'format': 'bestaudio',
-            'quiet': True,
-            'noplaylist': True
-        }
+        ydl_opts = crear_opciones_yt_dlp('bestaudio')
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             url_audio = info['url']
@@ -190,7 +235,7 @@ async def youtube(ctx, *, nombre: str):
             await reproducir_siguiente(ctx, guild_id)
 
     except Exception as e:
-        await ctx.send(f"❌ Error: {e}")
+        await ctx.send(f"❌ Error ({type(e).__name__}): {e}")
 
 # Comando: detener reproducción
 @bot.command()
@@ -217,5 +262,16 @@ async def leave(ctx):
 async def on_ready():
     print(f"✅ Bot conectado como {bot.user.name}")
 
-# Ejecutar el bot
-bot.run(TOKEN)
+def main():
+    try:
+        bot.run(TOKEN)
+    except discord.errors.PrivilegedIntentsRequired:
+        print(
+            "\n❌ Faltan intents privilegiados en Discord Developer Portal.\n"
+            "Activa al menos: Bot -> Privileged Gateway Intents -> Message Content Intent.\n"
+            "Si no vas a usar comandos con prefijo (!), también puedes desactivar intents.message_content en el código."
+        )
+
+
+if __name__ == "__main__":
+    main()
