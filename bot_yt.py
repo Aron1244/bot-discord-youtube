@@ -42,6 +42,31 @@ ffmpeg_options = {
 colas_musica = {}  # Diccionario con una cola por servidor
 
 
+def construir_before_options(info):
+    headers = info.get('http_headers') or {}
+    before = ffmpeg_options['before_options']
+
+    # Algunos hosts (HLS/CDN) exigen cabeceras de navegador para entregar segmentos.
+    user_agent = headers.get('User-Agent')
+    referer = headers.get('Referer')
+
+    if user_agent:
+        before += f' -user_agent "{user_agent.replace("\"", "")}"'
+    if referer:
+        before += f' -referer "{referer.replace("\"", "")}"'
+
+    return before
+
+
+def descomponer_item_cola(item):
+    if isinstance(item, tuple):
+        if len(item) == 3:
+            return item[0], item[1], item[2]
+        if len(item) == 2:
+            return item[0], item[1], ffmpeg_options['before_options']
+    return None, 'Desconocido', ffmpeg_options['before_options']
+
+
 def crear_opciones_yt_dlp(formato, busqueda_por_defecto=None):
     node_path = shutil.which("node")
     opciones = {
@@ -102,7 +127,7 @@ async def reproducir_siguiente(ctx, guild_id):
         return
 
     siguiente = await colas_musica[guild_id].get()
-    url_audio, titulo = siguiente
+    url_audio, titulo, before_options_track = descomponer_item_cola(siguiente)
 
     voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
     if voice_client is None or not voice_client.is_connected():
@@ -120,8 +145,11 @@ async def reproducir_siguiente(ctx, guild_id):
         except Exception as e:
             print(f"Error en after: {e}")
 
+    opciones_ffmpeg_track = dict(ffmpeg_options)
+    opciones_ffmpeg_track['before_options'] = before_options_track
+
     voice_client.play(
-        FFmpegPCMAudio(url_audio, executable=RUTA_FFMPEG, **ffmpeg_options),
+        FFmpegPCMAudio(url_audio, executable=RUTA_FFMPEG, **opciones_ffmpeg_track),
         after=after_callback
     )
     await ctx.send(f"🎶 Reproduciendo: **{titulo}**")
@@ -148,7 +176,7 @@ async def eliminar(ctx, *, nombre: str):
     # Vaciamos la cola actual y buscamos coincidencia parcial
     while not colas_musica[guild_id].empty():
         cancion = await colas_musica[guild_id].get()
-        url, titulo = cancion
+        _, titulo, _ = descomponer_item_cola(cancion)
         if nombre.lower() in titulo.lower() and not eliminada:
             eliminada = True
             await ctx.send(f"❌ Eliminado: **{titulo}**")
@@ -181,7 +209,8 @@ async def lista(ctx):
 
     cola = list(colas_musica[guild_id]._queue)
     mensaje = "**🎶 Canciones en cola:**\n"
-    for i, (_, titulo) in enumerate(cola, start=1):
+    for i, item in enumerate(cola, start=1):
+        _, titulo, _ = descomponer_item_cola(item)
         mensaje += f"{i}. {titulo}\n"
 
     await ctx.send(mensaje)
@@ -216,11 +245,34 @@ async def youtube(ctx, *, nombre: str):
             await ctx.send("No se encontró ningún video.")
             return
 
-        ydl_opts = crear_opciones_yt_dlp('bestaudio')
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            url_audio = info['url']
-            titulo = info.get('title', 'Desconocido')
+        ultimo_error = None
+        info = None
+        # Algunos sitios no publican un formato "bestaudio" puro.
+        for formato in ('bestaudio/best', 'best'):
+            try:
+                ydl_opts = crear_opciones_yt_dlp(formato)
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                break
+            except Exception as e:
+                ultimo_error = e
+
+        if info is None:
+            raise ultimo_error if ultimo_error else RuntimeError("No se pudo extraer el audio")
+
+        url_audio = info.get('url')
+        if not url_audio and info.get('requested_formats'):
+            # Si yt-dlp devuelve formato combinado, usamos el stream con audio.
+            for fmt in info['requested_formats']:
+                if fmt.get('acodec') and fmt.get('acodec') != 'none' and fmt.get('url'):
+                    url_audio = fmt['url']
+                    break
+
+        if not url_audio:
+            raise RuntimeError("No se encontró una URL de audio reproducible")
+
+        titulo = info.get('title', 'Desconocido')
+        before_options_track = construir_before_options(info)
 
         guild_id = ctx.guild.id
         if guild_id not in colas_musica:
@@ -228,10 +280,10 @@ async def youtube(ctx, *, nombre: str):
 
         voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
         if voice_client and voice_client.is_playing():
-            await colas_musica[guild_id].put((url_audio, titulo))
+            await colas_musica[guild_id].put((url_audio, titulo, before_options_track))
             await ctx.send(f"📝 Añadido a la cola: **{titulo}**")
         else:
-            await colas_musica[guild_id].put((url_audio, titulo))
+            await colas_musica[guild_id].put((url_audio, titulo, before_options_track))
             await reproducir_siguiente(ctx, guild_id)
 
     except Exception as e:
