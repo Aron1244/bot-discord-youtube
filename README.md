@@ -27,7 +27,6 @@ El bot ahora detecta ffmpeg automáticamente en este orden:
 1. Variable `BOT_FFMPEG_PATH` (ruta completa al ejecutable)
 2. Variable `BOT_FFMPEG_DIR` (carpeta que contiene ffmpeg)
 3. `ffmpeg` en PATH (recomendado para Linux/Termux)
-4. `./ffmpeg/bin/ffmpeg.exe` (fallback en Windows)
 
 ## Instalación
 
@@ -40,8 +39,7 @@ El bot ahora detecta ffmpeg automáticamente en este orden:
 2. Crea un entorno virtual e instala las dependencias:
    ```
    python -m venv .venv
-   .venv\Scripts\activate  # En Windows
-   # source .venv/bin/activate  # En Linux/Mac
+   # source .venv/bin/activate  # Linux/Mac/Termux
    pip install -r requirements.txt
    ```
 
@@ -105,8 +103,7 @@ El bot ahora detecta ffmpeg automáticamente en este orden:
 
 1. Activa el entorno virtual:
    ```
-   .venv\Scripts\activate  # En Windows
-   # source .venv/bin/activate  # En Linux/Mac
+   source .venv/bin/activate  # Linux/Mac/Termux
    ```
 
 2. Ejecuta el bot:

@@ -71,12 +71,6 @@ def resolver_rutas_ffmpeg():
     if ffmpeg_en_path:
         return ffmpeg_en_path, str(Path(ffmpeg_en_path).parent)
 
-    # Fallback para Windows usando el ffmpeg incluido en el repo.
-    ffmpeg_local_win = BASE_DIR / "ffmpeg" / "bin" / "ffmpeg.exe"
-    if ruta_existe(ffmpeg_local_win):
-        ejecutable = str(ffmpeg_local_win)
-        return ejecutable, str(ffmpeg_local_win.parent)
-
     # Último recurso: dejar el comando por nombre.
     return "ffmpeg", ""
 
