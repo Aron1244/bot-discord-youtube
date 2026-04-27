@@ -35,8 +35,8 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Ruta a ffmpeg
 BASE_DIR = Path(__file__).resolve().parent
-RUTA_FFMPEG = str((BASE_DIR / "ffmpeg" / "bin" / "ffmpeg.exe").resolve())
-RUTA_FFMPEG_DIR = str((BASE_DIR / "ffmpeg" / "bin").resolve())
+RUTA_FFMPEG = "ffmpeg"
+RUTA_FFMPEG_DIR = None
 
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
