@@ -42,17 +42,27 @@ def es_termux():
     return "com.termux" in prefijo or bool(os.environ.get("TERMUX_VERSION"))
 
 
+def ruta_existe(path_value):
+    if not path_value:
+        return False
+
+    try:
+        return Path(path_value).exists()
+    except (TypeError, OSError, ValueError):
+        return False
+
+
 def resolver_rutas_ffmpeg():
     # Permite forzar rutas desde variables de entorno.
     ruta_env = os.getenv("BOT_FFMPEG_PATH", "").strip()
-    if ruta_env and Path(ruta_env).exists():
+    if ruta_existe(ruta_env):
         ejecutable = str(Path(ruta_env))
         return ejecutable, str(Path(ejecutable).parent)
 
     dir_env = os.getenv("BOT_FFMPEG_DIR", "").strip()
-    if dir_env and Path(dir_env).exists():
+    if ruta_existe(dir_env):
         candidato = Path(dir_env) / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
-        if candidato.exists():
+        if ruta_existe(candidato):
             ejecutable = str(candidato)
             return ejecutable, str(Path(ejecutable).parent)
 
@@ -63,12 +73,12 @@ def resolver_rutas_ffmpeg():
 
     # Fallback para Windows usando el ffmpeg incluido en el repo.
     ffmpeg_local_win = BASE_DIR / "ffmpeg" / "bin" / "ffmpeg.exe"
-    if ffmpeg_local_win.exists():
+    if ruta_existe(ffmpeg_local_win):
         ejecutable = str(ffmpeg_local_win)
         return ejecutable, str(ffmpeg_local_win.parent)
 
     # Último recurso: dejar el comando por nombre.
-    return "ffmpeg", None
+    return "ffmpeg", ""
 
 
 RUTA_FFMPEG, RUTA_FFMPEG_DIR = resolver_rutas_ffmpeg()
@@ -109,7 +119,7 @@ def crear_opciones_base_yt_dlp():
     if node_path:
         opciones['js_runtimes'] = {'node': {'path': node_path}}
 
-    if RUTA_FFMPEG_DIR and os.path.exists(RUTA_FFMPEG_DIR):
+    if ruta_existe(RUTA_FFMPEG_DIR):
         opciones['ffmpeg_location'] = RUTA_FFMPEG_DIR
 
     return opciones
