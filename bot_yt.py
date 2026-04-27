@@ -35,8 +35,43 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Ruta a ffmpeg
 BASE_DIR = Path(__file__).resolve().parent
-RUTA_FFMPEG = "ffmpeg"
-RUTA_FFMPEG_DIR = None
+
+
+def es_termux():
+    prefijo = os.environ.get("PREFIX", "")
+    return "com.termux" in prefijo or bool(os.environ.get("TERMUX_VERSION"))
+
+
+def resolver_rutas_ffmpeg():
+    # Permite forzar rutas desde variables de entorno.
+    ruta_env = os.getenv("BOT_FFMPEG_PATH", "").strip()
+    if ruta_env and Path(ruta_env).exists():
+        ejecutable = str(Path(ruta_env))
+        return ejecutable, str(Path(ejecutable).parent)
+
+    dir_env = os.getenv("BOT_FFMPEG_DIR", "").strip()
+    if dir_env and Path(dir_env).exists():
+        candidato = Path(dir_env) / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+        if candidato.exists():
+            ejecutable = str(candidato)
+            return ejecutable, str(Path(ejecutable).parent)
+
+    # Primero intenta con ffmpeg disponible en PATH (ideal para Termux).
+    ffmpeg_en_path = shutil.which("ffmpeg")
+    if ffmpeg_en_path:
+        return ffmpeg_en_path, str(Path(ffmpeg_en_path).parent)
+
+    # Fallback para Windows usando el ffmpeg incluido en el repo.
+    ffmpeg_local_win = BASE_DIR / "ffmpeg" / "bin" / "ffmpeg.exe"
+    if ffmpeg_local_win.exists():
+        ejecutable = str(ffmpeg_local_win)
+        return ejecutable, str(ffmpeg_local_win.parent)
+
+    # Último recurso: dejar el comando por nombre.
+    return "ffmpeg", None
+
+
+RUTA_FFMPEG, RUTA_FFMPEG_DIR = resolver_rutas_ffmpeg()
 
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -74,7 +109,7 @@ def crear_opciones_base_yt_dlp():
     if node_path:
         opciones['js_runtimes'] = {'node': {'path': node_path}}
 
-    if os.path.exists(RUTA_FFMPEG_DIR):
+    if RUTA_FFMPEG_DIR and os.path.exists(RUTA_FFMPEG_DIR):
         opciones['ffmpeg_location'] = RUTA_FFMPEG_DIR
 
     return opciones
@@ -852,6 +887,9 @@ async def leave(ctx):
 @bot.event
 async def on_ready():
     print(f"✅ Bot conectado como {bot.user.name}")
+    print(f"🔧 ffmpeg: {RUTA_FFMPEG}")
+    if es_termux():
+        print("📱 Entorno detectado: Termux")
 
 
 @bot.event

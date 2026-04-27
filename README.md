@@ -18,7 +18,16 @@ Bot de música para Discord desarrollado en Python que permite reproducir músic
 
 - Python 3.8 o superior
 - Un token de Discord (instrucciones más abajo)
-- ffmpeg (incluido en el repositorio)
+- ffmpeg instalado y disponible en PATH
+
+### Nota sobre ffmpeg
+
+El bot ahora detecta ffmpeg automáticamente en este orden:
+
+1. Variable `BOT_FFMPEG_PATH` (ruta completa al ejecutable)
+2. Variable `BOT_FFMPEG_DIR` (carpeta que contiene ffmpeg)
+3. `ffmpeg` en PATH (recomendado para Linux/Termux)
+4. `./ffmpeg/bin/ffmpeg.exe` (fallback en Windows)
 
 ## Instalación
 
@@ -33,6 +42,32 @@ Bot de música para Discord desarrollado en Python que permite reproducir músic
    python -m venv .venv
    .venv\Scripts\activate  # En Windows
    # source .venv/bin/activate  # En Linux/Mac
+   pip install -r requirements.txt
+   ```
+
+### Instalación en Termux (Android)
+
+1. Instala paquetes del sistema:
+   ```bash
+   pkg update && pkg upgrade -y
+   pkg install -y python ffmpeg git libffi openssl
+   ```
+
+2. Clona el proyecto y entra al directorio:
+   ```bash
+   git clone https://github.com/tu-usuario/bot-discord-yt.git
+   cd bot-discord-yt
+   ```
+
+3. Crea y activa entorno virtual:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Instala dependencias:
+   ```bash
+   pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
@@ -79,6 +114,17 @@ Bot de música para Discord desarrollado en Python que permite reproducir músic
    python bot_yt.py
    ```
 
+En Termux:
+```bash
+source .venv/bin/activate
+python bot_yt.py
+```
+
+También puedes usar el script:
+```bash
+bash iniciar_bot_termux.sh
+```
+
 3. En Discord, usa los siguientes comandos:
 
 | Comando | Descripción |
@@ -94,7 +140,13 @@ Bot de música para Discord desarrollado en Python que permite reproducir músic
 
 ## Configuración
 
-El bot utiliza por defecto la carpeta `./ffmpeg/bin/ffmpeg.exe` para la reproducción de audio. Si deseas usar una instalación diferente de ffmpeg, puedes modificar la variable `RUTA_FFMPEG` en `bot_yt.py`.
+Si quieres forzar una ruta de ffmpeg concreta, puedes usar variables de entorno:
+
+```bash
+export BOT_FFMPEG_PATH=/ruta/completa/a/ffmpeg
+# o
+export BOT_FFMPEG_DIR=/ruta/a/carpeta/que/contiene/ffmpeg
+```
 
 ## Solución de problemas
 
