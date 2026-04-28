@@ -45,10 +45,23 @@ El bot ahora detecta ffmpeg automáticamente en este orden:
 
 ### Instalación en Termux (Android)
 
-1. Instala paquetes del sistema:
+1. Instala paquetes del sistema en termux:
    ```bash
    pkg update && pkg upgrade -y
    pkg install -y python ffmpeg git libffi openssl
+
+   pkg install python -y
+   pkg install ffmpeg -y
+   pkg install libsodium -y
+   pkg install rust -y
+   pkg install git -y
+   pkg install clang -y
+   pkg install make -y
+   ```
+1.1 Instalación en Arch
+   ```bash
+   sudo pacman -S python python-pip python-virtualenv \
+   ffmpeg libsodium rust git base-devel opus
    ```
 
 2. Clona el proyecto y entra al directorio:
@@ -67,6 +80,12 @@ El bot ahora detecta ffmpeg automáticamente en este orden:
    ```bash
    pip install --upgrade pip
    pip install -r requirements.txt
+   
+   ```
+4.1 Dependencias de termux
+   ```bash
+   pip install aiohttp
+   pip install audioop-lts
    ```
 
 3. Crea un archivo `.env` en la raíz del proyecto con tu token de Discord:
