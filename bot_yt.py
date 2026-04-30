@@ -5,6 +5,7 @@ import asyncio
 import os
 import shutil
 import sys
+import io
 from collections import deque
 from urllib.parse import parse_qs, urlparse
 from pathlib import Path
@@ -49,6 +50,27 @@ cache_playlist_urls = {}  # URLs pendientes de resolver por servidor
 tareas_precarga_playlist = {}  # Tarea de precarga activa por servidor
 canal_voz_objetivo = {}  # Canal de voz objetivo por servidor
 detener_reproduccion = {}  # Bandera para evitar auto-advance al detener
+
+# Máximo de caracteres permitidos por Discord en mensajes simples
+MAX_CONTENT = 4000
+
+
+async def safe_send(ctx, contenido, filename='output.txt'):
+    if contenido is None:
+        return
+    try:
+        if len(contenido) <= MAX_CONTENT:
+            await ctx.send(contenido)
+        else:
+            archivo = discord.File(io.BytesIO(contenido.encode('utf-8')), filename=filename)
+            await ctx.send(file=archivo)
+    except Exception:
+        # Intento de fallback truncado
+        try:
+            truncated = contenido[:MAX_CONTENT-50] + "\n\n... (mensaje truncado)"
+            await ctx.send(truncated)
+        except Exception:
+            raise
 
 
 class YtDlpLoggerSilencioso:
@@ -333,13 +355,13 @@ async def procesar_cache_playlist(ctx, guild_id):
         mensaje = f"✅ Playlist procesada desde cache: {agregadas} canción(es) en cola."
         if omitidas:
             mensaje += f" Omitidas por error/bloqueo/privado: {omitidas}."
-        await ctx.send(mensaje)
+        await safe_send(ctx, mensaje, filename='playlist_procesada.txt')
     except asyncio.CancelledError:
         pass
     except Exception as e:
         print(f"Error en procesar_cache_playlist (guild {guild_id}): {e}")
         try:
-            await ctx.send(f"❌ Error al procesar playlist en segundo plano: {type(e).__name__}: {e}")
+            await safe_send(ctx, f"❌ Error al procesar playlist en segundo plano: {type(e).__name__}: {e}", filename='error_procesar_playlist.txt')
         except Exception:
             pass
     finally:
@@ -396,7 +418,7 @@ async def cargar_playlist_en_cola(ctx, guild_id, voice_client, nombre):
     )
     if omitidas_inicial:
         mensaje += f" Omitidas al iniciar: {omitidas_inicial}."
-    await ctx.send(mensaje)
+    await safe_send(ctx, mensaje, filename='playlist_enviada_cache.txt')
 
 
 def extraer_info_audio(url):
@@ -458,7 +480,7 @@ def buscar_youtube_audio(query):
 # Función para unirse al canal de voz
 async def unirse_canal_voz(ctx):
     if not voz_disponible():
-        await ctx.send(mensaje_error_voz())
+        await safe_send(ctx, mensaje_error_voz(), filename='voz_error.txt')
         return None
 
     if ctx.author.voice:
@@ -537,7 +559,7 @@ async def reproducir_siguiente(ctx, guild_id):
     except Exception as e:
         if siguiente_item is not None:
             colas_musica[guild_id]._queue.appendleft(siguiente_item)
-        await ctx.send(f"❌ No pude iniciar la reproducción: {type(e).__name__}: {e}")
+        await safe_send(ctx, f"❌ No pude iniciar la reproducción: {type(e).__name__}: {e}", filename='reproduccion_error.txt')
         reproduccion_actual.pop(guild_id, None)
         return
 
@@ -618,8 +640,20 @@ async def lista(ctx):
 
     if pendientes_cache:
         mensaje += f"\n📦 En cache por procesar: {pendientes_cache} URL(s).\n"
-
-    await ctx.send(mensaje)
+    MAX_CONTENT = 4000
+    try:
+        if len(mensaje) <= MAX_CONTENT:
+            await safe_send(ctx, mensaje, filename='pahora.txt')
+        else:
+            archivo = discord.File(io.BytesIO(mensaje.encode('utf-8')), filename='lista.txt')
+            await ctx.send(file=archivo)
+    except Exception as exc:
+        # Fallback: intenta enviar truncado si falla el archivo
+        try:
+            truncated = mensaje[:MAX_CONTENT-50] + "\n\n... (mensaje truncado)"
+            await ctx.send(truncated)
+        except Exception:
+            raise exc
 
 @bot.command()
 async def comandos(ctx):
@@ -638,7 +672,7 @@ async def comandos(ctx):
 👋 `!leave` - Sale del canal de voz  
 📖 `!comandos` - Muestra esta lista de comandos
 """
-    await ctx.send(mensaje)
+    await safe_send(ctx, mensaje, filename='lista.txt')
 
 
 @bot.command()
@@ -687,7 +721,7 @@ async def debugvoz(ctx):
         f"Cache playlist: {cache_len}\n"
         f"Precarga: {tarea_estado}"
     )
-    await ctx.send(mensaje)
+    await safe_send(ctx, mensaje, filename='comandos.txt')
 
 
 async def obtener_proximas_canciones(guild_id, limite=5):
@@ -733,7 +767,7 @@ async def pahora(ctx):
         for i, titulo in enumerate(proximas, start=1):
             mensaje += f"{i}. {titulo}\n"
 
-    await ctx.send(mensaje)
+    await safe_send(ctx, mensaje, filename='debug_voz.txt')
 
 
 @bot.command()
@@ -741,27 +775,93 @@ async def last(ctx):
     guild_id = ctx.guild.id
     voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
 
-    if guild_id not in colas_musica or colas_musica[guild_id].empty():
+    cola = list(colas_musica[guild_id]._queue) if guild_id in colas_musica else []
+    cache_pendiente = list(cache_playlist_urls.get(guild_id, []))
+
+    if not cola and not cache_pendiente:
         await ctx.send("No hay canciones en cola para saltar a la ultima.")
         return
 
-    cola = list(colas_musica[guild_id]._queue)
-    ultima_cancion = cola[-1]
+    # Si todavía hay cache pendiente, la última canción real es la última URL aún no procesada.
+    if cache_pendiente:
+        ultima_cancion = cache_pendiente[-1]
+        es_cache_url = True
+    else:
+        ultima_cancion = cola[-1]
+        es_cache_url = False
 
-    nueva_cola = asyncio.Queue()
-    await nueva_cola.put(ultima_cancion)
-    colas_musica[guild_id] = nueva_cola
+    # Reemplazamos la cola por una vacía (vamos a reproducir la última directamente)
+    colas_musica[guild_id] = asyncio.Queue()
 
     cancelar_precarga_playlist(guild_id)
     cache_playlist_urls.pop(guild_id, None)
     tareas_precarga_playlist.pop(guild_id, None)
 
-    if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
-        voice_client.stop()
-        await ctx.send("⏭ Saltando a la ultima canción y limpiando el resto de la cola.")
+    await safe_send(ctx, "⏭ Saltando a la última canción y limpiando el resto de la cola.", filename='last_action.txt')
+
+    # Preparar la URL/audio de la última canción
+    url_audio = None
+    titulo = 'Desconocido'
+    before_options_track = ffmpeg_options['before_options']
+
+    if es_cache_url:
+        try:
+            url_audio, titulo, before_options_track = await asyncio.to_thread(extraer_info_audio, ultima_cancion)
+        except Exception as e:
+            await safe_send(ctx, f"❌ No se pudo preparar la última canción: {type(e).__name__}: {e}", filename='last_error.txt')
+            return
+    elif isinstance(ultima_cancion, dict) and ultima_cancion.get('tipo') == 'youtube_pendiente':
+        item_url, item_titulo, item_before = descomponer_item_cola(ultima_cancion)
+        titulo = item_titulo or 'Desconocido'
+        before_options_track = item_before or ffmpeg_options['before_options']
+        try:
+            url_audio, titulo, before_options_track = await asyncio.to_thread(extraer_info_audio, item_url)
+        except Exception as e:
+            await safe_send(ctx, f"❌ No se pudo preparar la última canción: {type(e).__name__}: {e}", filename='last_error.txt')
+            return
     else:
-        await ctx.send("⏭ Dejando solo la ultima canción y preparandola para reproducirse.")
-        await reproducir_siguiente(ctx, guild_id)
+        item_url, item_titulo, item_before = descomponer_item_cola(ultima_cancion)
+        titulo = item_titulo or 'Desconocido'
+        before_options_track = item_before or ffmpeg_options['before_options']
+        url_audio = item_url
+
+    # Forzamos que el callback anterior no avance automáticamente (evita carreras)
+    detener_reproduccion[guild_id] = True
+
+    if voice_client is None or not voice_client.is_connected():
+        voice_client = await unirse_canal_voz(ctx)
+        if voice_client is None:
+            return
+
+    try:
+        # Detenemos la reproducción actual (si hay) para reemplazarla por la última
+        if voice_client.is_playing() or voice_client.is_paused():
+            voice_client.stop()
+
+        # Callback igual que en reproducir_siguiente
+        def after_callback(error):
+            if error:
+                print(f"Error en reproducción: {error}")
+            if detener_reproduccion.get(guild_id):
+                detener_reproduccion.pop(guild_id, None)
+                return
+            asyncio.run_coroutine_threadsafe(reproducir_siguiente(ctx, guild_id), bot.loop)
+
+        opciones_ffmpeg_track = dict(ffmpeg_options)
+        opciones_ffmpeg_track['before_options'] = before_options_track
+
+        voice_client.play(
+            FFmpegPCMAudio(url_audio, executable=RUTA_FFMPEG, **opciones_ffmpeg_track),
+            after=after_callback
+        )
+    except Exception as e:
+        await safe_send(ctx, f"❌ No pude iniciar la reproducción de la última canción: {type(e).__name__}: {e}", filename='last_error.txt')
+        # Restaurar estado
+        reproduccion_actual.pop(guild_id, None)
+        return
+
+    reproduccion_actual[guild_id] = titulo
+    await safe_send(ctx, f"🎶 Reproduciendo (última): **{titulo}**", filename='now_playing.txt')
 
 
 # Comando: reproducir audio desde YouTube
@@ -801,9 +901,25 @@ async def play(ctx, *, nombre: str):
             return
 
         url_audio, titulo, before_options_track = await asyncio.to_thread(extraer_info_audio, url)
+
+        # Si hay cache de playlist pendiente, añadimos la URL al final del cache
+        cache_activa = bool(cache_playlist_urls.get(guild_id))
+        tarea_activa = tareas_precarga_playlist.get(guild_id)
+        if cache_activa or tarea_activa:
+            if guild_id not in cache_playlist_urls:
+                cache_playlist_urls[guild_id] = deque()
+            cache_playlist_urls[guild_id].append(url)
+            # Si no hay worker activo, lanzarlo
+            if tareas_precarga_playlist.get(guild_id) is None:
+                tarea = asyncio.create_task(procesar_cache_playlist(ctx, guild_id))
+                tareas_precarga_playlist[guild_id] = tarea
+            await safe_send(ctx, f"🧾 Añadido al final del cache de playlist: **{titulo}**", filename='añadido_cache.txt')
+            return
+
+        # Comportamiento normal: si se está reproduciendo, añadir a la cola; si no, poner y reproducir
         if voice_client and voice_client.is_playing():
             await colas_musica[guild_id].put((url_audio, titulo, before_options_track))
-            await ctx.send(f"📝 Añadido a la cola: **{titulo}**")
+            await safe_send(ctx, f"📝 Añadido a la cola: **{titulo}**", filename='añadido_cola.txt')
         else:
             await colas_musica[guild_id].put((url_audio, titulo, before_options_track))
             await reproducir_siguiente(ctx, guild_id)
