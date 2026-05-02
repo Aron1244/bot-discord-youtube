@@ -7,6 +7,7 @@ import shutil
 import sys
 import io
 from collections import deque
+import re
 from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 from dotenv import load_dotenv
@@ -102,18 +103,52 @@ def crear_opciones_base_yt_dlp():
     return opciones
 
 
+def _sanitizar_user_agent_ffmpeg(user_agent, max_length=256):
+    if not isinstance(user_agent, str):
+        return None
+    sanitized = ''.join(
+        c for c in user_agent
+        if 32 <= ord(c) <= 126 and c not in {'"', '\\'}
+    ).strip()
+    if not sanitized:
+        return None
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length].rstrip()
+    return sanitized or None
+
+
+def _sanitizar_referer_ffmpeg(referer, max_length=1024):
+    if not isinstance(referer, str):
+        return None
+    sanitized = ''.join(
+        c for c in referer
+        if 32 <= ord(c) <= 126 and c not in {'"', '\\'}
+    ).strip()
+    if not sanitized:
+        return None
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length].rstrip()
+    # Reject values containing whitespace characters (safer for argv parsing)
+    if any(c.isspace() for c in sanitized):
+        return None
+    parsed = urlparse(sanitized)
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        return None
+    return sanitized
+
+
 def construir_before_options(info):
     headers = info.get('http_headers') or {}
     before = ffmpeg_options['before_options']
 
     # Algunos hosts (HLS/CDN) exigen cabeceras de navegador para entregar segmentos.
-    user_agent = headers.get('User-Agent')
-    referer = headers.get('Referer')
+    user_agent = _sanitizar_user_agent_ffmpeg(headers.get('User-Agent'))
+    referer = _sanitizar_referer_ffmpeg(headers.get('Referer'))
 
     if user_agent:
-        before += f' -user_agent "{user_agent.replace("\"", "")}"'
+        before += f' -user_agent "{user_agent}"'
     if referer:
-        before += f' -referer "{referer.replace("\"", "")}"'
+        before += f' -referer "{referer}"'
 
     return before
 
@@ -558,7 +593,21 @@ async def reproducir_siguiente(ctx, guild_id):
         )
     except Exception as e:
         if siguiente_item is not None:
-            colas_musica[guild_id]._queue.appendleft(siguiente_item)
+            try:
+                await colas_musica[guild_id].put_front(siguiente_item)
+            except Exception:
+                # En caso de que la cola no soporte put_front (por compatibilidad),
+                # reconstruimos una nueva cola con el item al frente.
+                new_q = QueueWithPeek()
+                await new_q.put(siguiente_item)
+                # Vaciar lo que quede de la cola antigua hacia la nueva
+                while not colas_musica[guild_id].empty():
+                    try:
+                        it = await colas_musica[guild_id].get()
+                    except Exception:
+                        break
+                    await new_q.put(it)
+                colas_musica[guild_id] = new_q
         await safe_send(ctx, f"❌ No pude iniciar la reproducción: {type(e).__name__}: {e}", filename='reproduccion_error.txt')
         reproduccion_actual.pop(guild_id, None)
         return
@@ -582,7 +631,7 @@ async def eliminar(ctx, *, nombre: str):
         await ctx.send("No hay canciones en la cola.")
         return
 
-    nueva_cola = asyncio.Queue()
+    nueva_cola = QueueWithPeek()
     eliminada = False
 
     # Vaciamos la cola actual y buscamos coincidencia parcial
@@ -629,7 +678,7 @@ async def lista(ctx):
     if titulo_actual:
         mensaje += f"▶️ Sonando ahora: {titulo_actual}\n\n"
 
-    cola = list(colas_musica[guild_id]._queue) if guild_id in colas_musica else []
+    cola = colas_musica[guild_id].peek_all() if guild_id in colas_musica else []
     if cola:
         mensaje += "**📝 Canciones en cola:**\n"
         for i, item in enumerate(cola, start=1):
@@ -640,7 +689,6 @@ async def lista(ctx):
 
     if pendientes_cache:
         mensaje += f"\n📦 En cache por procesar: {pendientes_cache} URL(s).\n"
-    MAX_CONTENT = 4000
     try:
         if len(mensaje) <= MAX_CONTENT:
             await safe_send(ctx, mensaje, filename='pahora.txt')
@@ -727,7 +775,7 @@ async def debugvoz(ctx):
 async def obtener_proximas_canciones(guild_id, limite=5):
     resultado = []
 
-    cola = list(colas_musica[guild_id]._queue) if guild_id in colas_musica else []
+    cola = colas_musica[guild_id].peek_all() if guild_id in colas_musica else []
     for item in cola:
         _, titulo, _ = descomponer_item_cola(item)
         resultado.append(titulo)
@@ -775,7 +823,7 @@ async def last(ctx):
     guild_id = ctx.guild.id
     voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
 
-    cola = list(colas_musica[guild_id]._queue) if guild_id in colas_musica else []
+    cola = colas_musica[guild_id].peek_all() if guild_id in colas_musica else []
     cache_pendiente = list(cache_playlist_urls.get(guild_id, []))
 
     if not cola and not cache_pendiente:
@@ -791,7 +839,7 @@ async def last(ctx):
         es_cache_url = False
 
     # Reemplazamos la cola por una vacía (vamos a reproducir la última directamente)
-    colas_musica[guild_id] = asyncio.Queue()
+    colas_musica[guild_id] = QueueWithPeek()
 
     cancelar_precarga_playlist(guild_id)
     cache_playlist_urls.pop(guild_id, None)
@@ -874,7 +922,7 @@ async def play(ctx, *, nombre: str):
 
         guild_id = ctx.guild.id
         if guild_id not in colas_musica:
-            colas_musica[guild_id] = asyncio.Queue()
+            colas_musica[guild_id] = QueueWithPeek()
 
         if ctx.author.voice:
             canal_voz_objetivo[guild_id] = ctx.author.voice.channel.id
