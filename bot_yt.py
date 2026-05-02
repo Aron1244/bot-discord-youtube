@@ -52,7 +52,7 @@ canal_voz_objetivo = {}  # Canal de voz objetivo por servidor
 detener_reproduccion = {}  # Bandera para evitar auto-advance al detener
 
 # Máximo de caracteres permitidos por Discord en mensajes simples
-MAX_CONTENT = 4000
+MAX_CONTENT = 2000
 
 
 async def safe_send(ctx, contenido, filename='output.txt'):
