@@ -728,19 +728,8 @@ async def lista(ctx):
 
     if pendientes_cache:
         mensaje += f"\n📦 En cache por procesar: {pendientes_cache} URL(s).\n"
-    try:
-        if len(mensaje) <= MAX_CONTENT:
-            await safe_send(ctx, mensaje, filename='pahora.txt')
-        else:
-            archivo = discord.File(io.BytesIO(mensaje.encode('utf-8')), filename='lista.txt')
-            await ctx.send(file=archivo)
-    except Exception as exc:
-        # Fallback: intenta enviar truncado si falla el archivo
-        try:
-            truncated = mensaje[:MAX_CONTENT-50] + "\n\n... (mensaje truncado)"
-            await ctx.send(truncated)
-        except Exception:
-            raise exc
+    # Usar safe_send para manejar envío directo o como archivo con fallback.
+    await safe_send(ctx, mensaje, filename='lista.txt')
 
 @bot.command()
 async def comandos(ctx):
