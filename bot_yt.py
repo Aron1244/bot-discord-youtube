@@ -974,8 +974,14 @@ async def play(ctx, *, nombre: str):
 
         # Detectar playlists usando la misma función de detección centralizada
         # para evitar tratar enlaces tipo `/watch?v=...&list=...` como playlist completa.
-        if es_url_playlist_youtube(nombre):
+        # Si la URL incluye un parámetro `list=` tratamos de cargar la playlist completa.
+        # Esto permite que enlaces tipo `watch?v=...&list=...` también carguen la lista.
+        if nombre.strip().startswith(('http://', 'https://')) and obtener_playlist_id_youtube(nombre):
             await ctx.send("📚 Detecté un enlace con playlist. Cargando lista completa...")
+            await cargar_playlist_en_cola(ctx, guild_id, voice_client, nombre)
+            return
+
+        if es_url_playlist_youtube(nombre):
             await cargar_playlist_en_cola(ctx, guild_id, voice_client, nombre)
             return
 
