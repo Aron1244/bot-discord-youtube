@@ -45,6 +45,45 @@ ffmpeg_options = {
     'options': '-vn'
 }
 
+
+class QueueWithPeek:
+    """Cola asincrónica ligera con soporte para poner al frente y listar elementos.
+
+    Implementada sobre collections.deque y asyncio.Condition para evitar tocar
+    atributos privados de asyncio.Queue como `_queue`.
+    """
+    def __init__(self):
+        self._deque = deque()
+        self._cond = asyncio.Condition()
+
+    def qsize(self):
+        return len(self._deque)
+
+    def empty(self):
+        return len(self._deque) == 0
+
+    async def put(self, item):
+        async with self._cond:
+            self._deque.append(item)
+            self._cond.notify_all()
+
+    async def put_front(self, item):
+        async with self._cond:
+            self._deque.appendleft(item)
+            self._cond.notify_all()
+
+    async def get(self):
+        async with self._cond:
+            while not self._deque:
+                await self._cond.wait()
+            return self._deque.popleft()
+
+    def peek_all(self):
+        return list(self._deque)
+
+    def clear(self):
+        self._deque.clear()
+
 colas_musica = {}  # Diccionario con una cola por servidor
 reproduccion_actual = {}  # Titulo en reproduccion por servidor
 cache_playlist_urls = {}  # URLs pendientes de resolver por servidor
