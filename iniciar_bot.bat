@@ -1,6 +1,12 @@
 @echo off
-cd /d C:\Desarrollo\bot-discord-youtube
+:: Usar el directorio del script para mayor portabilidad
+cd /d "%~dp0"
 
-.venv\Scripts\python.exe bot_yt.py
+if exist ".venv\Scripts\python.exe" (
+	.venv\Scripts\python.exe bot_yt.py
+) else (
+	echo No se encontró .venv\Scripts\python.exe. Activa el entorno virtual o crea uno con: python -m venv .venv
+	exit /b 1
+)
 
 pause
