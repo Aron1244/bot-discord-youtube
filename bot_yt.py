@@ -90,6 +90,10 @@ cache_playlist_urls = {}  # URLs pendientes de resolver por servidor
 tareas_precarga_playlist = {}  # Tarea de precarga activa por servidor
 canal_voz_objetivo = {}  # Canal de voz objetivo por servidor
 detener_reproduccion = {}  # Bandera para evitar auto-advance al detener
+modo_bucle = {}  # Modo de bucle por servidor: None, "lista" o "cancion"
+lista_bucle = {}  # Lista de canciones para hacer bucle por servidor
+cancion_bucle = {}  # Canción actual para hacer bucle de una sola canción
+reproduccion_item = {}  # Item (tupla/dict) actualmente en reproducción por servidor
 
 # Máximo de caracteres permitidos por Discord en mensajes simples
 MAX_CONTENT = 2000
@@ -416,6 +420,11 @@ async def procesar_cache_playlist(ctx, guild_id):
                 continue
 
             await colas_musica[guild_id].put(item)
+            # Si está activo el modo bucle de lista, añadir también a la lista de bucle
+            if modo_bucle.get(guild_id) == "lista":
+                if guild_id not in lista_bucle:
+                    lista_bucle[guild_id] = []
+                lista_bucle[guild_id].append(item)
             agregadas += 1
 
             voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
@@ -469,6 +478,11 @@ async def cargar_playlist_en_cola(ctx, guild_id, voice_client, nombre):
             continue
 
         await colas_musica[guild_id].put(item)
+        # Si está activo el modo bucle de lista, añadir también a la lista de bucle
+        if modo_bucle.get(guild_id) == "lista":
+            if guild_id not in lista_bucle:
+                lista_bucle[guild_id] = []
+            lista_bucle[guild_id].append(item)
         agregadas_inicial += 1
         await ctx.send(f"➕ Primera canción en cola: {item[1]}")
 
@@ -578,11 +592,20 @@ async def unirse_canal_voz(ctx):
 async def reproducir_siguiente(ctx, guild_id):
     if detener_reproduccion.get(guild_id):
         reproduccion_actual.pop(guild_id, None)
+        reproduccion_item.pop(guild_id, None)
         return
 
     if colas_musica[guild_id].empty():
-        reproduccion_actual.pop(guild_id, None)
-        return
+        # Si está en modo bucle de lista, rellenar la cola con la lista guardada
+        if modo_bucle.get(guild_id) == "lista" and lista_bucle.get(guild_id):
+            for item in lista_bucle[guild_id]:
+                await colas_musica[guild_id].put(item)
+        # Si está en modo bucle de canción, agregar la canción al final de la cola
+        elif modo_bucle.get(guild_id) == "cancion" and cancion_bucle.get(guild_id):
+            await colas_musica[guild_id].put(cancion_bucle[guild_id])
+        else:
+            reproduccion_actual.pop(guild_id, None)
+            return
 
     siguiente_item = None
     url_audio = None
@@ -605,6 +628,7 @@ async def reproducir_siguiente(ctx, guild_id):
 
     if not url_audio:
         reproduccion_actual.pop(guild_id, None)
+        reproduccion_item.pop(guild_id, None)
         return
 
     voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
@@ -650,6 +674,13 @@ async def reproducir_siguiente(ctx, guild_id):
         await safe_send(ctx, f"❌ No pude iniciar la reproducción: {type(e).__name__}: {e}", filename='reproduccion_error.txt')
         reproduccion_actual.pop(guild_id, None)
         return
+
+    # Guardar el item actualmente en reproducción
+    reproduccion_item[guild_id] = siguiente_item
+
+    # Guardar canción actual si está en modo bucle de canción
+    if modo_bucle.get(guild_id) == "cancion":
+        cancion_bucle[guild_id] = siguiente_item
 
     reproduccion_actual[guild_id] = titulo
     await ctx.send(f"🎶 Reproduciendo: **{titulo}**")
@@ -744,6 +775,9 @@ async def comandos(ctx):
 📝 `!lista` - Muestra la lista de canciones en cola  
 ❌ `!eliminar <nombre>` - Elimina una canción específica de la cola  
 🧹 `!limpiar` - Limpia completamente la cola de canciones  
+🔁 `!looplist` - Activa el bucle para toda la lista (se repite infinitamente)  
+🔂 `!loopsingle` - Activa el bucle para una sola canción (la actual se repite)  
+⏹ `!noloop` - Desactiva cualquier modo de bucle  
 ⏹ `!stop` - Detiene la reproducción  
 👋 `!leave` - Sale del canal de voz  
 📖 `!comandos` - Muestra esta lista de comandos
@@ -989,6 +1023,12 @@ async def play(ctx, *, nombre: str):
             if guild_id not in cache_playlist_urls:
                 cache_playlist_urls[guild_id] = deque()
             cache_playlist_urls[guild_id].append(url)
+            # Si está activo el modo bucle de lista, añadir item pendiente a la lista de bucle
+            if modo_bucle.get(guild_id) == "lista":
+                if guild_id not in lista_bucle:
+                    lista_bucle[guild_id] = []
+                indice = len(lista_bucle[guild_id]) + 1
+                lista_bucle[guild_id].append(crear_item_pendiente(url, indice))
             # Si no hay worker activo, lanzarlo
             if tareas_precarga_playlist.get(guild_id) is None:
                 tarea = asyncio.create_task(procesar_cache_playlist(ctx, guild_id))
@@ -998,10 +1038,22 @@ async def play(ctx, *, nombre: str):
 
         # Comportamiento normal: si se está reproduciendo, añadir a la cola; si no, poner y reproducir
         if voice_client and voice_client.is_playing():
-            await colas_musica[guild_id].put((url_audio, titulo, before_options_track))
+            item_to_put = (url_audio, titulo, before_options_track)
+            await colas_musica[guild_id].put(item_to_put)
+            # Si está en modo bucle de lista, agregar también a la lista de bucle
+            if modo_bucle.get(guild_id) == "lista":
+                if guild_id not in lista_bucle:
+                    lista_bucle[guild_id] = []
+                lista_bucle[guild_id].append(item_to_put)
             await safe_send(ctx, f"📝 Añadido a la cola: **{titulo}**", filename='añadido_cola.txt')
         else:
-            await colas_musica[guild_id].put((url_audio, titulo, before_options_track))
+            item_to_put = (url_audio, titulo, before_options_track)
+            await colas_musica[guild_id].put(item_to_put)
+            # Si está en modo bucle de lista, agregar también a la lista de bucle
+            if modo_bucle.get(guild_id) == "lista":
+                if guild_id not in lista_bucle:
+                    lista_bucle[guild_id] = []
+                lista_bucle[guild_id].append(item_to_put)
             await reproducir_siguiente(ctx, guild_id)
 
     except Exception as e:
@@ -1021,6 +1073,7 @@ async def stop(ctx):
             await colas_musica[guild_id].get()
 
     reproduccion_actual.pop(guild_id, None)
+    reproduccion_item.pop(guild_id, None)
 
     if voice_client and (voice_client.is_playing() or voice_client.is_paused()):
         detener_reproduccion[guild_id] = True
@@ -1039,10 +1092,75 @@ async def leave(ctx):
         detener_reproduccion.pop(ctx.guild.id, None)
         await voice_client.disconnect()
         reproduccion_actual.pop(ctx.guild.id, None)
+        reproduccion_item.pop(ctx.guild.id, None)
         canal_voz_objetivo.pop(ctx.guild.id, None)
         await ctx.send("👋 Desconectado del canal de voz.")
     else:
         await ctx.send("No estoy conectado a ningún canal de voz.")
+
+# Comando: Bucle de lista completa
+@bot.command()
+async def looplist(ctx):
+    guild_id = ctx.guild.id
+    
+    # Construir la lista completa para el bucle: canción actual + cola + cache
+    nueva_lista = []
+
+    # Añadir la canción actualmente en reproducción (si existe)
+    if reproduccion_item.get(guild_id):
+        nueva_lista.append(reproduccion_item[guild_id])
+
+    # Añadir los elementos de la cola pendiente
+    if guild_id in colas_musica:
+        nueva_lista.extend(colas_musica[guild_id].peek_all())
+
+    # Añadir URLs en cache como items pendientes
+    cache_urls = list(cache_playlist_urls.get(guild_id, []))
+    for i, url in enumerate(cache_urls, start=1):
+        nueva_lista.append(crear_item_pendiente(url, i))
+
+    if not nueva_lista:
+        await ctx.send("❌ No hay canciones disponibles (reproducción, cola o cache) para hacer bucle.")
+        return
+
+    # Guardar la lista completa para el bucle
+    lista_bucle[guild_id] = nueva_lista
+    modo_bucle[guild_id] = "lista"
+    cancion_bucle.pop(guild_id, None)  # Asegurarse de limpiar el bucle de canción
+    
+    cantidad = len(lista_bucle[guild_id])
+    await ctx.send(f"🔁 Modo bucle activado para la lista de {cantidad} canción(es). La lista se repetirá infinitamente.")
+
+# Comando: Bucle de una sola canción
+@bot.command()
+async def loopsingle(ctx):
+    guild_id = ctx.guild.id
+    
+    titulo_actual = reproduccion_actual.get(guild_id)
+    if not titulo_actual:
+        await ctx.send("❌ No hay ninguna canción reproduciéndose.")
+        return
+    
+    # El elemento a hacer bucle se guardará en reproducir_siguiente
+    modo_bucle[guild_id] = "cancion"
+    lista_bucle.pop(guild_id, None)  # Asegurarse de limpiar el bucle de lista
+    
+    await ctx.send(f"🔂 Modo bucle de canción activado para: **{titulo_actual}**")
+
+# Comando: Desactivar bucle
+@bot.command()
+async def noloop(ctx):
+    guild_id = ctx.guild.id
+    
+    if guild_id not in modo_bucle or modo_bucle[guild_id] is None:
+        await ctx.send("❌ No hay ningún modo de bucle activado.")
+        return
+    
+    modo_bucle.pop(guild_id, None)
+    lista_bucle.pop(guild_id, None)
+    cancion_bucle.pop(guild_id, None)
+    
+    await ctx.send("⏹ Modo bucle desactivado.")
 
 # Mensaje de conexión
 @bot.event
